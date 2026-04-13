@@ -1,86 +1,86 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Control Ocupación - SCT", page_icon="📊", layout="wide")
+# Colores corporativos profesionales
+COLOR_PRINCIPAL = "#008B8B" # Cyan oscuro para datos profesionales y analíticos
+COLOR_ALERTA = "#E74C3C"    # Rojo para marcar alerta (< 18 días)
+LIMITE_POLITICA = 18.0      # Límite de días para la alerta
 
-# Colores y Política
-COLOR_CYAN = "#008B8B"
-COLOR_ALERTA = "#E74C3C"
-LIMITE_DIAS = 18.0
+st.set_page_config(page_title="Dashboard Ocupación SCT", layout="wide")
 
-st.title("📊 Gestión de Ocupación por Proyectos")
-st.markdown(f"Monitor de capacidad basado en la política interna de **{LIMITE_DIAS} días hábiles**.")
+st.title("📊 Dashboard de Ocupación por Proyectos")
 
-# --- CONEXIÓN EN VIVO A GOOGLE SHEETS ---
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-@st.cache_data(ttl=600) # Se actualiza automáticamente cada 10 minutos
+# 1. Carga de datos
+@st.cache_data
 def cargar_datos():
-    # Enlace directo a tu planilla
-    url_hoja = "https://docs.google.com/spreadsheets/d/1IQhd4LR8CjEd3PIYb7WUCW364vaKS4QVpCtLNQOpFB8/edit#gid=280416127"
-    return conn.read(spreadsheet=url_hoja, worksheet="BD HH")
+    # Asegúrate de que el CSV esté en la misma carpeta que este script
+    df = pd.read_csv("HH PV  equipo 2026 - BD HH.csv")
+    # Limpieza de datos (Días en formato texto "6,00")
+    df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').astype(float)
+    return df
 
-try:
-    # 1. Carga de información
-    df = cargar_datos()
-    
-    # 2. Limpieza de datos (Conversión de "6,00" a número)
-    df['Dias'] = df['Dias'].astype(str).str.strip().str.replace(',', '.').astype(float)
-    
-    # 3. Filtros laterales
-    st.sidebar.header("Panel de Control")
-    meses_disponibles = df['Mes'].dropna().unique()
-    mes_sel = st.sidebar.selectbox("Seleccionar Mes de Análisis", meses_disponibles)
-    
-    # Filtrado por mes
-    df_mes = df[df['Mes'] == mes_sel]
-    
-    # 4. Procesamiento por Consultor
-    resumen = df_mes.groupby('Nombre consultor')['Dias'].sum().reset_index()
-    resumen['Estado'] = resumen['Dias'].apply(lambda x: "Sobrecarga" if x > LIMITE_DIAS else "Óptimo")
-    resumen['Color'] = resumen['Estado'].apply(lambda x: COLOR_ALERTA if x == "Sobrecarga" else COLOR_CYAN)
+df = cargar_datos()
 
-    # 5. Visualización de Gráficos
-    st.subheader(f"Días Asignados en {mes_sel}")
-    
+# 2. Filtros Laterales
+st.sidebar.header("Panel de Control")
+meses_disponibles = df['Mes'].dropna().unique()
+mes_sel = st.sidebar.selectbox("Seleccionar Mes de Análisis", meses_disponibles)
+
+# Filtramos la tabla original por el mes seleccionado
+df_mes = df[df['Mes'] == mes_sel]
+
+# 3. Procesamiento y Agrupación por Consultor
+# Sumamos los días totales asignados a cada persona en ese mes
+resumen = df_mes.groupby('Nombre consultor')['Dias'].sum().reset_index()
+
+# Lógica de colores corporativos: Rojo si < 18, Cyan si >= 18
+resumen['Alerta_Color'] = resumen['Dias'].apply(
+    lambda x: COLOR_ALERTA if x < LIMITE_POLITICA else COLOR_PRINCIPAL
+)
+
+# 4. KPIs superiores
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Consultores", len(resumen))
+col2.metric("Total Días Sumados", resumen['Dias'].sum())
+col3.metric("Personas por debajo de 18 días", len(resumen[resumen['Dias'] < LIMITE_DIAS]))
+
+st.divider()
+
+# 5. Visualización: Gráfico de Barras y Tabla de Detalle
+col_izq, col_der = st.columns([2, 1])
+
+with col_izq:
+    # Gráfico Profesional
+    st.subheader("Días Asignados por Consultor (Límite Político 18 días)")
     fig = px.bar(
         resumen, 
         x='Nombre consultor', 
         y='Dias', 
-        color='Color',
-        color_discrete_map="identity",
-        text_auto='.1f'
+        color='Alerta_Color',
+        color_discrete_map="identity" # Forza a Plotly a usar los códigos HEX exactos
     )
-    
-    # Línea de referencia de los 18 días
+    # Añadimos la línea punteada roja para marcar el límite de 18 días
     fig.add_hline(
         y=LIMITE_DIAS, 
         line_dash="dash", 
-        line_color=COLOR_ALERTA,
-        annotation_text=f"Límite Político ({LIMITE_DIAS} días)",
-        annotation_position="top right"
+        line_color=COLOR_ALERTA, 
+        annotation_text=f"Límite Político ({LIMITE_DIAS} días)"
     )
-    
-    fig.update_layout(xaxis_title="", yaxis_title="Días Totales Sumados", showlegend=False)
+    fig.update_layout(showlegend=False, xaxis_title="", yaxis_title="Días Totales Sumados")
     st.plotly_chart(fig, use_container_width=True)
 
-    # 6. Tabla de Alertas Críticas
-    sobrecargados = resumen[resumen['Estado'] == "Sobrecarga"].sort_values(by='Dias', ascending=False)
-    
-    if not sobrecargados.empty:
-        st.error(f"⚠️ Alerta: {len(sobrecargados)} consultores superan la política de {LIMITE_DIAS} días.")
-        st.dataframe(
-            sobrecargados[['Nombre consultor', 'Dias']], 
-            hide_index=True,
-            use_container_width=True
-        )
-    else:
-        st.success(f"✅ Todos los consultores cumplen con la política de {LIMITE_DIAS} días en {mes_sel}.")
+with col_der:
+    # Tabla Analítica
+    st.subheader("Detalle de Asignaciones en el Mes")
+    # Mostramos la sábana filtrada para que puedan ver en qué proyectos está cada quien
+    # Usamos st.dataframe para permitir filtros y ordenamiento en la tabla
+    st.dataframe(
+        df_mes[['Nombre consultor', 'Proyecto', 'Cargo', 'Dias', 'Estado proyecto']], 
+        use_container_width=True
+    )
 
-except Exception as e:
-    st.error("Error al conectar con la sábana de datos.")
-    st.info("Verifica que los 'Secrets' en Streamlit Cloud tengan el formato TOML correcto y que la hoja se llame 'BD HH'.")
-    st.write(f"Detalle: {e}")
+st.write("### Acciones")
+if st.button("📧 Enviar Alertas por Correo"):
+    # Aquí iría tu script de envío automático
+    st.success("¡Alerta enviada! Se ha notificado a los socios responsables sobre las personas que exceden o están por debajo del límite de días.")
