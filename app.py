@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-# --- CONFIGURACIÓN CORPORATIVA SCT ---
+# --- CONFIGURACIÓN SCT ---
 st.set_page_config(page_title="Gestión de Recursos SCT", page_icon="📊", layout="wide")
 
 COLOR_CYAN = "#008B8B"
@@ -13,7 +13,6 @@ LIMITE_POLITICA = 18.0
 
 st.title("📊 Dashboard Gerencial: Ocupación y Desocupación")
 
-# --- CONEXIÓN EN VIVO ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_data(ttl=300)
@@ -23,88 +22,75 @@ def cargar_datos():
 
 try:
     df = cargar_datos()
-    # Limpieza de decimales
     df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').astype(float)
     
-    # --- FILTROS DE PANEL ---
+    # --- FILTROS ---
     st.sidebar.header("Filtros de Análisis")
+    meses_ordenados = df['Mes'].dropna().unique() # Asumimos que vienen ordenados en la base
+    mes_sel = st.sidebar.selectbox("Analizar Mes Específico", meses_ordenados)
     
-    # 1. Filtro de Mes
-    meses = df['Mes'].dropna().unique()
-    mes_sel = st.sidebar.selectbox("Mes", meses)
+    # --- BLOQUE 1: ANÁLISIS DEL MES SELECCIONADO ---
+    df_mes = df[df['Mes'] == mes_sel]
+    resumen_mes = df_mes.groupby('Nombre consultor')['Dias'].sum().reset_index()
     
-    # 2. Filtro Único de Proyecto
-    proyectos = df['Proyecto'].dropna().unique()
-    opciones_proy = ["Todos los Proyectos"] + list(proyectos)
-    proy_sel = st.sidebar.selectbox("Filtrar por Proyecto", opciones_proy)
+    total_dias_mes = resumen_mes['Dias'].sum()
+    capacidad_mes = len(resumen_mes) * LIMITE_POLITICA
+    total_desocupacion = max(0, capacidad_mes - total_dias_mes)
     
-    # Lógica de filtrado
-    df_filtrado = df[df['Mes'] == mes_sel]
-    if proy_sel != "Todos los Proyectos":
-        df_filtrado = df_filtrado[df_filtrado['Proyecto'] == proy_sel]
-    
-    # --- PROCESAMIENTO DE DATOS ---
-    resumen = df_filtrado.groupby('Nombre consultor')['Dias'].sum().reset_index()
-    resumen['Color'] = resumen['Dias'].apply(lambda x: COLOR_RED if x < LIMITE_POLITICA else COLOR_CYAN)
+    st.header(f"Detalle Mensual: {mes_sel}")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Ocupación Global", f"{(total_dias_mes/capacidad_mes*100):.1f}%")
+    m2.metric("Días Ocupados", f"{total_dias_mes:.1f}")
+    m3.metric("Desocupación (Días Libres)", f"{total_desocupacion:.1f}")
 
-    # --- CÁLCULO DE RATIOS ---
-    total_dias_ocupados = resumen['Dias'].sum()
-    capacidad_teorica = len(resumen) * LIMITE_POLITICA
+    col_bar, col_pie = st.columns([7, 3])
+    with col_bar:
+        fig_bar = px.bar(resumen_mes, x='Nombre consultor', y='Dias', 
+                         color_discrete_sequence=[COLOR_CYAN], text_auto='.1f')
+        fig_bar.add_hline(y=LIMITE_POLITICA, line_dash="dash", line_color=COLOR_RED)
+        st.plotly_chart(fig_bar, use_container_width=True)
     
-    # Desocupación (Días libres)
-    total_desocupacion = capacidad_teorica - total_dias_ocupados
-    if total_desocupacion < 0: total_desocupacion = 0 # En caso de sobrecarga masiva
-        
-    ocupacion_porcentaje = (total_dias_ocupados / capacidad_teorica) * 100 if capacidad_teorica > 0 else 0
-    
-    # --- MÉTRICAS SUPERIORES ---
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Ocupación Global", f"{ocupacion_porcentaje:.1f}%")
-    m2.metric("Días Ocupados", f"{total_dias_ocupados:.1f}")
-    m3.metric("Desocupación (Días)", f"{total_desocupacion:.1f}")
-    m4.metric("Consultores < 18d", len(resumen[resumen['Dias'] < LIMITE_POLITICA]))
+    with col_pie:
+        fig_pie = go.Figure(data=[go.Pie(labels=['Ocupado', 'Desocupado'], 
+                                         values=[total_dias_mes, total_desocupacion], 
+                                         hole=.4, marker_colors=[COLOR_CYAN, "#E5E7E9"])])
+        fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), legend=dict(orientation="h", y=-0.1))
+        st.plotly_chart(fig_pie, use_container_width=True)
 
     st.divider()
 
-    # --- GRÁFICOS ---
-    col_barras, col_dona = st.columns([7, 3])
+    # --- BLOQUE 2: CUADRO RESUMEN Y RATIOS (LO QUE PIDIÓ AL FINAL) ---
+    st.header("📈 Resumen Consolidado y Tendencias")
+    
+    # Matriz Consultor vs Mes
+    matriz = df.pivot_table(index='Nombre consultor', columns='Mes', values='Dias', aggfunc='sum', fill_value=0)
+    # Reordenar columnas según los meses encontrados
+    matriz = matriz[meses_ordenados]
+    
+    st.subheader("Matriz de Ocupación por Consultor (Días)")
+    # Aplicar un estilo para resaltar en rojo los que no llegan a 18
+    def resaltar_bajos(val):
+        color = COLOR_RED if val < LIMITE_POLITICA and val > 0 else 'black'
+        return f'color: {color}'
+    
+    st.dataframe(matriz.style.applymap(resaltar_bajos), use_container_width=True)
 
-    with col_barras:
-        st.subheader(f"Ocupación Nominal: {proy_sel}")
-        fig_bar = px.bar(
-            resumen, x='Nombre consultor', y='Dias',
-            color='Color', color_discrete_map="identity",
-            text_auto='.1f'
-        )
-        fig_bar.add_hline(y=LIMITE_POLITICA, line_dash="dash", line_color=COLOR_RED, annotation_text="Meta 18d")
-        fig_bar.update_layout(xaxis_title="", yaxis_title="Días")
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-    with col_dona:
-        st.subheader("Estado de Capacidad")
-        # Gráfico de Dona Maximizada
-        fig_pie = go.Figure(data=[go.Pie(
-            labels=['Ocupado', 'Desocupado'],
-            values=[total_dias_ocupados, total_desocupacion],
-            hole=.4,
-            marker_colors=[COLOR_CYAN, "#E5E7E9"],
-            textinfo='percent'
-        )])
-        
-        fig_pie.update_layout(
-            margin=dict(t=20, b=20, l=10, r=10),
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
-
-    # --- TABLA DE DETALLE ---
-    st.subheader("Listado de Consultores")
-    resumen['Días Desocupados'] = resumen['Dias'].apply(lambda x: max(0, LIMITE_POLITICA - x))
-    st.dataframe(
-        resumen[['Nombre consultor', 'Dias', 'Días Desocupados']].sort_values(by='Dias'),
-        use_container_width=True,
-        hide_index=True
-    )
+    # Gráfico de Ratios de Ocupación y Desocupación por Mes
+    st.subheader("Evolución de Ratios: Ocupación vs Desocupación")
+    
+    # Calculamos totales mensuales para el gráfico
+    tendencia = df.groupby('Mes')['Dias'].sum().reindex(meses_ordenados).reset_index()
+    # Para la capacidad, contamos cuántos consultores únicos hubo cada mes
+    consultores_mes = df.groupby('Mes')['Nombre consultor'].nunique().reindex(meses_ordenados)
+    tendencia['Capacidad'] = consultores_mes.values * LIMITE_POLITICA
+    tendencia['Desocupacion'] = (tendencia['Capacidad'] - tendencia['Dias']).clip(lower=0)
+    
+    fig_trend = go.Figure()
+    fig_trend.add_trace(go.Bar(name='Ocupación', x=tendencia['Mes'], y=tendencia['Dias'], marker_color=COLOR_CYAN))
+    fig_trend.add_trace(go.Bar(name='Desocupación', x=tendencia['Mes'], y=tendencia['Desocupacion'], marker_color="#E5E7E9"))
+    
+    fig_trend.update_layout(barmode='stack', xaxis_title="Mes", yaxis_title="Días Totales Equipo")
+    st.plotly_chart(fig_trend, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Error al cargar la información: {e}")
+    st.error(f"Error al generar el consolidado: {e}")
