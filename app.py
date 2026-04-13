@@ -59,7 +59,7 @@ try:
 
     st.divider()
 
-    # --- BLOQUE 2: CUADRO RESUMEN Y RATIOS (LO QUE PIDIÓ AL FINAL) ---
+# --- BLOQUE 2: CUADRO RESUMEN Y RATIOS ---
     st.header("📈 Resumen Consolidado y Tendencias")
     
     # Matriz Consultor vs Mes
@@ -73,7 +73,8 @@ try:
         color = COLOR_RED if val < LIMITE_POLITICA and val > 0 else 'black'
         return f'color: {color}'
     
-    st.dataframe(matriz.style.applymap(resaltar_bajos), use_container_width=True)
+    # AQUÍ ESTÁ LA CORRECCIÓN: Usamos .map en lugar de .applymap
+    st.dataframe(matriz.style.map(resaltar_bajos), use_container_width=True)
 
     # Gráfico de Ratios de Ocupación y Desocupación por Mes
     st.subheader("Evolución de Ratios: Ocupación vs Desocupación")
