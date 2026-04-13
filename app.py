@@ -64,7 +64,8 @@ try:
     
     # Matriz Consultor vs Mes
     matriz = df.pivot_table(index='Nombre consultor', columns='Mes', values='Dias', aggfunc='sum', fill_value=0)
-    # Reordenar columnas según los meses encontrados
+    
+    # Filtramos solo los meses que existen y los ordenamos para que la tabla sea coherente
     matriz = matriz[meses_ordenados]
     
     st.subheader("Matriz de Ocupación por Consultor (Días)")
@@ -73,24 +74,33 @@ try:
         color = COLOR_RED if val < LIMITE_POLITICA and val > 0 else 'black'
         return f'color: {color}'
     
-    # AQUÍ ESTÁ LA CORRECCIÓN: Usamos .map en lugar de .applymap
-    st.dataframe(matriz.style.map(resaltar_bajos), use_container_width=True)
+    # CORRECCIÓN 1: Agregamos .format("{:.1f}") para limpiar los decimales de los ceros
+    st.dataframe(matriz.style.format("{:.1f}").map(resaltar_bajos), use_container_width=True)
 
     # Gráfico de Ratios de Ocupación y Desocupación por Mes
     st.subheader("Evolución de Ratios: Ocupación vs Desocupación")
     
-    # Calculamos totales mensuales para el gráfico
-    tendencia = df.groupby('Mes')['Dias'].sum().reindex(meses_ordenados).reset_index()
-    # Para la capacidad, contamos cuántos consultores únicos hubo cada mes
-    consultores_mes = df.groupby('Mes')['Nombre consultor'].nunique().reindex(meses_ordenados)
-    tendencia['Capacidad'] = consultores_mes.values * LIMITE_POLITICA
-    tendencia['Desocupacion'] = (tendencia['Capacidad'] - tendencia['Dias']).clip(lower=0)
+    # Agrupamos los días totales trabajados por mes, rellenando con 0 si un mes no tiene actividad
+    tendencia = df.groupby('Mes')['Dias'].sum().reindex(meses_ordenados, fill_value=0).reset_index()
+    
+    # CORRECCIÓN 2: Capacidad Real de la Nómina
+    # Contamos TODOS los consultores únicos que existen en toda la base de datos
+    total_consultores_nomina = df['Nombre consultor'].nunique()
+    
+    # La capacidad de la empresa es fija: Total de empleados x 18 días
+    capacidad_mensual_fija = total_consultores_nomina * LIMITE_POLITICA
+    
+    # Calculamos la desocupación real (Capacidad fija - Días trabajados ese mes)
+    tendencia['Desocupacion'] = (capacidad_mensual_fija - tendencia['Dias']).clip(lower=0)
     
     fig_trend = go.Figure()
     fig_trend.add_trace(go.Bar(name='Ocupación', x=tendencia['Mes'], y=tendencia['Dias'], marker_color=COLOR_CYAN))
-    fig_trend.add_trace(go.Bar(name='Desocupación', x=tendencia['Mes'], y=tendencia['Desocupacion'], marker_color="#E5E7E9"))
+    fig_trend.add_trace(go.Bar(name='Desocupación (Capacidad Libre)', x=tendencia['Mes'], y=tendencia['Desocupacion'], marker_color="#E5E7E9"))
     
-    fig_trend.update_layout(barmode='stack', xaxis_title="Mes", yaxis_title="Días Totales Equipo")
+    # La línea punteada roja para marcar el tope de la capacidad total de la empresa
+    fig_trend.add_hline(y=capacidad_mensual_fija, line_dash="dash", line_color=COLOR_RED, annotation_text=f"Capacidad Total de la Nómina ({capacidad_mensual_fija} d)")
+    
+    fig_trend.update_layout(barmode='stack', xaxis_title="Mes", yaxis_title="Días Totales de la Empresa")
     st.plotly_chart(fig_trend, use_container_width=True)
 
 except Exception as e:
