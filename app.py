@@ -3,63 +3,59 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
 
-# --- CONFIGURACIÓN DE LA PÁGINA Y CONSTANTES ---
+# --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Control Ocupación - SCT", page_icon="📊", layout="wide")
 
+# Colores y Política
 COLOR_CYAN = "#008B8B"
 COLOR_ALERTA = "#E74C3C"
 LIMITE_DIAS = 18.0
 
 st.title("📊 Gestión de Ocupación por Proyectos")
-st.markdown("Monitor de horas asignadas vs. política de empresa (18 días máximos).")
+st.markdown(f"Monitor de capacidad basado en la política interna de **{LIMITE_DIAS} días hábiles**.")
 
-# --- CONEXIÓN A GOOGLE SHEETS ---
-# Streamlit usará automáticamente los "Secrets" que pegaste en la plataforma
+# --- CONEXIÓN EN VIVO A GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Usamos caché para que no recargue la base de datos en cada clic (se actualiza cada 10 min)
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600) # Se actualiza automáticamente cada 10 minutos
 def cargar_datos():
-    # Asegúrate de que "BD HH" es el nombre exacto de la pestaña en tu Excel
-    return conn.read(worksheet="BD HH")
+    # Enlace directo a tu planilla
+    url_hoja = "https://docs.google.com/spreadsheets/d/1IQhd4LR8CjEd3PIYb7WUCW364vaKS4QVpCtLNQOpFB8/edit#gid=280416127"
+    return conn.read(spreadsheet=url_hoja, worksheet="BD HH")
 
 try:
-    # 1. Obtener y limpiar datos
+    # 1. Carga de información
     df = cargar_datos()
     
-    # Limpiamos la columna de días: quitamos espacios, cambiamos coma por punto y convertimos a número
+    # 2. Limpieza de datos (Conversión de "6,00" a número)
     df['Dias'] = df['Dias'].astype(str).str.strip().str.replace(',', '.').astype(float)
     
-    # 2. Filtros laterales
-    st.sidebar.header("Filtros de Búsqueda")
-    # Limpiamos los meses vacíos en caso de que la sábana tenga filas en blanco al final
+    # 3. Filtros laterales
+    st.sidebar.header("Panel de Control")
     meses_disponibles = df['Mes'].dropna().unique()
     mes_sel = st.sidebar.selectbox("Seleccionar Mes de Análisis", meses_disponibles)
     
-    # Filtramos la tabla por el mes elegido
+    # Filtrado por mes
     df_mes = df[df['Mes'] == mes_sel]
     
-    # 3. Procesamiento de Ocupación
-    # Agrupamos por persona y sumamos todos sus días en ese mes
+    # 4. Procesamiento por Consultor
     resumen = df_mes.groupby('Nombre consultor')['Dias'].sum().reset_index()
-    
-    # Asignamos estado y color según el límite de 18 días
     resumen['Estado'] = resumen['Dias'].apply(lambda x: "Sobrecarga" if x > LIMITE_DIAS else "Óptimo")
     resumen['Color'] = resumen['Estado'].apply(lambda x: COLOR_ALERTA if x == "Sobrecarga" else COLOR_CYAN)
 
-    # 4. Construcción del Gráfico
-    st.subheader(f"Distribución de Días Asignados: {mes_sel}")
+    # 5. Visualización de Gráficos
+    st.subheader(f"Días Asignados en {mes_sel}")
     
     fig = px.bar(
         resumen, 
         x='Nombre consultor', 
         y='Dias', 
         color='Color',
-        color_discrete_map="identity", # Obliga a usar nuestros colores exactos
-        text_auto='.1f' # Muestra el número sobre la barra
+        color_discrete_map="identity",
+        text_auto='.1f'
     )
     
-    # Agregamos la línea punteada de límite
+    # Línea de referencia de los 18 días
     fig.add_hline(
         y=LIMITE_DIAS, 
         line_dash="dash", 
@@ -68,25 +64,23 @@ try:
         annotation_position="top right"
     )
     
-    fig.update_layout(xaxis_title="", yaxis_title="Días Totales", showlegend=False)
+    fig.update_layout(xaxis_title="", yaxis_title="Días Totales Sumados", showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-    # 5. Panel de Alertas
-    sobrecargados = resumen[resumen['Estado'] == "Sobrecarga"]
+    # 6. Tabla de Alertas Críticas
+    sobrecargados = resumen[resumen['Estado'] == "Sobrecarga"].sort_values(by='Dias', ascending=False)
     
     if not sobrecargados.empty:
-        st.error(f"⚠️ Atención: Se detectaron {len(sobrecargados)} consultores que exceden el límite de {LIMITE_DIAS} días este mes.")
-        # Mostramos la tabla solo con los que superan el límite
+        st.error(f"⚠️ Alerta: {len(sobrecargados)} consultores superan la política de {LIMITE_DIAS} días.")
         st.dataframe(
-            sobrecargados[['Nombre consultor', 'Dias']].sort_values(by='Dias', ascending=False), 
+            sobrecargados[['Nombre consultor', 'Dias']], 
             hide_index=True,
             use_container_width=True
         )
     else:
-        st.success(f"✅ Excelente: Ningún consultor supera el límite de {LIMITE_DIAS} días en {mes_sel}.")
+        st.success(f"✅ Todos los consultores cumplen con la política de {LIMITE_DIAS} días en {mes_sel}.")
 
 except Exception as e:
-    # Mensaje de error por si la conexión falla o el nombre de la hoja no coincide
-    st.error("Hubo un problema al conectar con la sábana de datos o al leer las columnas.")
-    st.info("Verifica que la pestaña se llame exactamente 'BD HH' y que los secretos estén bien configurados en Streamlit Cloud.")
-    st.write(f"Detalle técnico del error: {e}")
+    st.error("Error al conectar con la sábana de datos.")
+    st.info("Verifica que los 'Secrets' en Streamlit Cloud tengan el formato TOML correcto y que la hoja se llame 'BD HH'.")
+    st.write(f"Detalle: {e}")
