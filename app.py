@@ -20,23 +20,29 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def cargar_datos():
     url = "https://docs.google.com/spreadsheets/d/1IQhd4LR8CjEd3PIYb7WUCW364vaKS4QVpCtLNQOpFB8/edit#gid=280416127"
     df = conn.read(spreadsheet=url, worksheet="BD HH")
-    # Limpieza de datos
+    # Limpieza de datos (decimales)
     df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').astype(float)
     return df
 
 try:
     df = cargar_datos()
     
-    # 1. ORDENAMIENTO CRONOLÓGICO DE MESES
-    orden_meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
-                   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-    # Convertimos la columna Mes en una categoría con orden específico
+    # 1. ORDENAMIENTO CRONOLÓGICO REAL (Adaptado a tu formato 01/2026)
+    # Extraemos los meses que realmente existen en tu Excel
+    meses_reales = df['Mes'].dropna().unique()
+    
+    # Los ordenamos cronológicamente interpretándolos como fecha (Mes/Año)
+    try:
+        orden_meses = sorted(meses_reales, key=lambda x: pd.to_datetime(x, format='%m/%Y'))
+    except Exception:
+        # Si llega a haber un texto raro en la columna, los ordena alfabéticamente como plan B
+        orden_meses = sorted(meses_reales) 
+        
     df['Mes'] = pd.Categorical(df['Mes'], categories=orden_meses, ordered=True)
     
     # --- FILTROS ---
     st.sidebar.header("Filtros de Análisis")
-    meses_reales = sorted(df['Mes'].dropna().unique(), key=lambda x: orden_meses.index(x))
-    mes_sel = st.sidebar.selectbox("Mes de Análisis", meses_reales)
+    mes_sel = st.sidebar.selectbox("Mes de Análisis", orden_meses)
     
     proyectos = ["Todos"] + list(df['Proyecto'].dropna().unique())
     proy_sel = st.sidebar.selectbox("Proyecto", proyectos)
@@ -71,12 +77,12 @@ try:
 
     st.divider()
 
-    # --- BLOQUE CONSOLIDADO (ORDENADO Y FORMATEADO) ---
+    # --- BLOQUE CONSOLIDADO ---
     st.header("📈 Consolidado Histórico")
     
-    # Matriz con formato de 1 decimal y orden cronológico
+    # Matriz Consultor vs Mes
     matriz = df.pivot_table(index='Nombre consultor', columns='Mes', values='Dias', aggfunc='sum', fill_value=0)
-    # Reordenar columnas según los meses que existen en los datos
+    # Filtramos para que solo muestre las columnas de los meses que realmente existen y en orden
     meses_en_datos = [m for m in orden_meses if m in matriz.columns]
     matriz = matriz[meses_en_datos]
     
@@ -91,11 +97,11 @@ try:
 
     # Evolución de Ocupación Total
     st.subheader("Tendencia de Ocupación Total por Mes")
-    # Aseguramos que el gráfico de barras respete el orden de los meses
+    # Aseguramos que el gráfico de barras respete el orden cronológico
     tendencia = df.groupby('Mes', observed=False)['Dias'].sum().reindex(meses_en_datos).reset_index()
     
     fig_tend = px.bar(tendencia, x='Mes', y='Dias', color_discrete_sequence=[COLOR_CYAN], text_auto='.1f')
-    fig_tend.update_layout(xaxis_title="Meses Cronológicos", yaxis_title="Días Totales Equipo")
+    fig_tend.update_layout(xaxis_title="Meses", yaxis_title="Días Totales Equipo")
     st.plotly_chart(fig_tend, use_container_width=True)
 
 except Exception as e:
