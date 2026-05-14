@@ -4,9 +4,19 @@ import pandas as pd
 from datetime import datetime
 
 # --- CONFIGURACIÓN CORPORATIVA ---
-st.set_page_config(page_title="Módulo de Aprobaciones SCT", page_icon="🔐", layout="wide")
+# Cambiamos el nombre que aparece en la pestaña del navegador
+st.set_page_config(page_title="Módulo de Aprobaciones INNSPIRAL", page_icon="🔐", layout="wide")
 
-st.title("🛡️ Portal de Aprobaciones - SCT")
+# --- LOGO DE LA EMPRESA ---
+# Intentará cargar el logo desde GitHub. El width controla el tamaño (250 píxeles es un buen estándar).
+try:
+    st.image("logo.png", width=250)
+except Exception:
+    # Si aún no subes la imagen, esto evita que la pantalla muestre un error feo en rojo
+    pass
+
+# Cambiamos el título principal
+st.title("🛡️ Portal de Aprobaciones - INNSPIRAL")
 
 # --- CONEXIÓN ---
 # Se utiliza ttl=0 para que no use memoria caché y siempre traiga los datos más frescos del Excel
