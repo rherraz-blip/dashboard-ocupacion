@@ -22,10 +22,15 @@ def cargar_permisos():
 
 def cargar_bd():
     df = conn.read(spreadsheet=URL_HOJA, worksheet="BD HH", ttl=0)
-    columnas_requeridas = ['Estado Aprobación', 'Aprobado Por', 'Comentarios Gerencia', 'Fecha de Acción']
-    for col in columnas_requeridas:
+    
+    # Aseguramos las columnas y FORZAMOS que sean de texto
+    columnas_texto = ['Estado Aprobación', 'Aprobado Por', 'Comentarios Gerencia', 'Fecha de Acción']
+    for col in columnas_texto:
         if col not in df.columns:
-            df[col] = None
+            df[col] = ""  # En vez de None, usamos texto vacío
+        else:
+            # Rellena vacíos con "" y convierte todo a string (texto)
+            df[col] = df[col].fillna("").astype(str)
             
     df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').str.strip()
     df['Dias'] = pd.to_numeric(df['Dias'], errors='coerce').fillna(0.0)
@@ -51,8 +56,6 @@ if st.session_state.usuario is None:
             try:
                 df_permisos = cargar_permisos()
                 
-                # --- SOLUCIÓN AL PROBLEMA DEL 12345.0 ---
-                # Convertimos todo a texto y si termina en '.0', se lo quitamos
                 def limpiar_clave(c):
                     c_str = str(c).strip()
                     if c_str.endswith('.0'):
@@ -60,7 +63,6 @@ if st.session_state.usuario is None:
                     return c_str
                 
                 df_permisos['Clave_Limpia'] = df_permisos['Clave'].apply(limpiar_clave)
-                # ----------------------------------------
                 
                 match = df_permisos[
                     (df_permisos['Email Gerente'].astype(str).str.strip().str.lower() == email_input.strip().lower()) & 
