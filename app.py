@@ -1,144 +1,150 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+from datetime import datetime
 
-# --- CONFIGURACIÓN CORPORATIVA SCT ---
-st.set_page_config(page_title="Gestión de Recursos SCT", page_icon="📊", layout="wide")
+# --- CONFIGURACIÓN CORPORATIVA ---
+st.set_page_config(page_title="Módulo de Aprobaciones SCT", page_icon="🔐", layout="wide")
 
-COLOR_CYAN = "#008B8B"    # Óptimo (18 días)
-COLOR_RED = "#E74C3C"     # Alerta Baja (< 18 días)
-COLOR_PURPLE = "#6A5ACD"  # Sobrecarga (> 18 días)
-LIMITE_POLITICA = 18.0
-
-st.title("📊 Planificación Estratégica: Ocupación y Proyección")
+st.title("🛡️ Portal de Aprobaciones - SCT")
 
 # --- CONEXIÓN ---
+# Se utiliza ttl=0 para que no use memoria caché y siempre traiga los datos más frescos del Excel
 conn = st.connection("gsheets", type=GSheetsConnection)
+URL_HOJA = "https://docs.google.com/spreadsheets/d/1IQhd4LR8CjEd3PIYb7WUCW364vaKS4QVpCtLNQOpFB8/edit#gid=280416127"
 
-@st.cache_data(ttl=300)
-def cargar_datos():
-    url = "https://docs.google.com/spreadsheets/d/1IQhd4LR8CjEd3PIYb7WUCW364vaKS4QVpCtLNQOpFB8/edit#gid=280416127"
-    df = conn.read(spreadsheet=url, worksheet="BD HH")
-    df['Mes'] = df['Mes'].astype(str).str.strip()
-    df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').str.strip().astype(float)
+def cargar_permisos():
+    return conn.read(spreadsheet=URL_HOJA, worksheet="Permisos_Gerencia", ttl=0)
+
+def cargar_bd():
+    df = conn.read(spreadsheet=URL_HOJA, worksheet="BD HH", ttl=0)
+    
+    # Asegurar que existan las columnas nuevas (por si acaso aún no se han escrito en Excel)
+    columnas_requeridas = ['Estado Aprobación', 'Aprobado Por', 'Comentarios Gerencia', 'Fecha de Acción']
+    for col in columnas_requeridas:
+        if col not in df.columns:
+            df[col] = None
+            
+    # Limpieza de días a formato numérico
+    df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').str.strip()
+    df['Dias'] = pd.to_numeric(df['Dias'], errors='coerce').fillna(0.0)
     return df
 
-try:
-    df = cargar_datos()
+# --- GESTIÓN DE SESIÓN (LOGIN) ---
+if 'usuario' not in st.session_state:
+    st.session_state.usuario = None
+if 'proyectos_asignados' not in st.session_state:
+    st.session_state.proyectos_asignados = []
+
+# 1. PANTALLA DE LOGIN
+if st.session_state.usuario is None:
+    st.subheader("🔒 Acceso Restringido")
+    st.write("Por favor, ingresa tus credenciales de gerencia para autorizar horas.")
     
-    # Orden cronológico
-    meses_reales = df['Mes'].unique()
-    orden_meses = sorted(meses_reales, key=lambda x: pd.to_datetime(x, format='%m/%Y'))
-    df['Mes'] = pd.Categorical(df['Mes'], categories=orden_meses, ordered=True)
-    
-    # --- FILTROS LATERALES ---
-    st.sidebar.header("🔍 Filtros Globales")
-    mes_sel = st.sidebar.selectbox("Seleccionar Mes de Análisis", orden_meses)
-    
-    # Filtro de Proyecto
-    lista_proyectos = ["Todos los Proyectos"] + sorted(list(df['Proyecto'].dropna().unique()))
-    proy_sel = st.sidebar.selectbox("Seleccionar Proyecto", lista_proyectos)
-
-    # NUEVO: Buscador de Consultor específico
-    st.sidebar.divider()
-    st.sidebar.write("👤 **Buscador de Consultor**")
-    busqueda_nombre = st.sidebar.text_input("Escribir nombre:", placeholder="Ej: ABADIA")
-    
-    # Aplicar Filtros Globales
-    df_filtrado = df.copy()
-    if proy_sel != "Todos los Proyectos":
-        df_filtrado = df_filtrado[df_filtrado['Proyecto'] == proy_sel]
-    if busqueda_nombre:
-        df_filtrado = df_filtrado[df_filtrado['Nombre consultor'].str.contains(busqueda_nombre, case=False, na=False)]
-
-    # --- DATOS DEL MES SELECCIONADO ---
-    df_mes = df_filtrado[df_filtrado['Mes'] == mes_sel]
-    # Para el semáforo necesitamos el TOTAL por consultor
-    resumen_total_persona = df_mes.groupby('Nombre consultor')['Dias'].sum().reset_index()
-    
-    # --- KPIs ---
-    total_dias = resumen_total_persona['Dias'].sum()
-    capacidad_teorica = len(resumen_total_persona) * LIMITE_POLITICA
-    desocupacion = max(0, capacidad_teorica - total_dias)
-
-    st.subheader(f"Estado de Gestión: {proy_sel} ({mes_sel})")
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Ocupación Proyecto", f"{(total_dias/capacidad_teorica*100 if capacidad_teorica > 0 else 0):.1f}%")
-    k2.metric("Días Asignados", f"{total_dias:.1f}")
-    k3.metric("Desocupación", f"{desocupacion:.1f} d")
-    k4.metric("Consultores en vista", len(resumen_total_persona))
-
-    st.divider()
-
-    # --- BLOQUE MENSUAL ---
-    col_izq, col_der = st.columns([7, 3])
-
-    with col_izq:
-        # Pestañas para elegir qué ver
-        tab_total, tab_proyectos = st.tabs(["🚦 Ver Semáforo (Totales)", "🎨 Ver por Proyectos (Detalle)"])
+    with st.form("login_form"):
+        email_input = st.text_input("Correo electrónico corporativo")
+        clave_input = st.text_input("Clave de acceso", type="password")
+        btn_login = st.form_submit_button("Ingresar al Portal")
         
-        with tab_total:
-            st.write("**Gráfico de alertas de política (Total días por persona)**")
-            def get_color(d):
-                if d < LIMITE_POLITICA: return COLOR_RED
-                if d > LIMITE_POLITICA: return COLOR_PURPLE
-                return COLOR_CYAN
+        if btn_login:
+            try:
+                df_permisos = cargar_permisos()
+                # Filtrar la hoja de permisos buscando coincidencias exactas
+                match = df_permisos[
+                    (df_permisos['Email Gerente'].astype(str).str.strip().str.lower() == email_input.strip().lower()) & 
+                    (df_permisos['Clave'].astype(str).str.strip() == clave_input.strip())
+                ]
+                
+                if not match.empty:
+                    st.session_state.usuario = email_input
+                    # Guardamos la lista de proyectos que le pertenecen a este gerente
+                    st.session_state.proyectos_asignados = match['Proyecto Asignado'].tolist()
+                    st.success("Acceso concedido. Cargando tus proyectos...")
+                    st.rerun()
+                else:
+                    st.error("❌ Credenciales incorrectas. Verifica tu correo o contraseña.")
+            except Exception as e:
+                st.error(f"Error al conectar con la base de permisos: {e}")
+
+# 2. PANTALLA DE APROBACIÓN (USUARIO LOGUEADO)
+else:
+    st.sidebar.success(f"👤 Conectado como:\n**{st.session_state.usuario}**")
+    if st.sidebar.button("Cerrar Sesión"):
+        st.session_state.usuario = None
+        st.session_state.proyectos_asignados = []
+        st.rerun()
+        
+    st.subheader("✅ Revisión y Aprobación de Carga (HH)")
+    
+    try:
+        # Cargar base de datos completa
+        df_bd = cargar_bd()
+        
+        # Filtrar SOLO las filas de los proyectos que le pertenecen a este gerente
+        df_gerente = df_bd[df_bd['Proyecto'].isin(st.session_state.proyectos_asignados)].copy()
+        
+        if df_gerente.empty:
+            st.info("No tienes consultores asignados en tus proyectos para revisar en este momento.")
+        else:
+            st.write("Haz doble clic en las celdas de las columnas **Dias**, **Estado Aprobación** o **Comentarios Gerencia** para modificar.")
             
-            resumen_total_persona['Color'] = resumen_total_persona['Dias'].apply(get_color)
-            fig_total = px.bar(resumen_total_persona, x='Nombre consultor', y='Dias', 
-                              color='Color', color_discrete_map="identity", text_auto='.1f')
-            fig_total.add_hline(y=LIMITE_POLITICA, line_dash="dash", line_color="gray")
-            st.plotly_chart(fig_total, use_container_width=True)
+            # Bloqueamos todas las columnas excepto las 3 que puede editar
+            columnas_bloqueadas = [col for col in df_gerente.columns if col not in ['Dias', 'Estado Aprobación', 'Comentarios Gerencia']]
+            
+            with st.form("editor_form"):
+                # Mostrar el editor interactivo
+                df_editado = st.data_editor(
+                    df_gerente,
+                    disabled=columnas_bloqueadas,
+                    column_config={
+                        "Estado Aprobación": st.column_config.SelectboxColumn(
+                            "Estado Aprobación",
+                            help="Selecciona el estado de revisión",
+                            options=["Pendiente", "Aprobado", "Rechazado"],
+                            required=True
+                        ),
+                        "Comentarios Gerencia": st.column_config.TextColumn(
+                            "Comentarios Gerencia",
+                            help="Explica por qué ajustaste los días o el rechazo"
+                        ),
+                        "Dias": st.column_config.NumberColumn(
+                            "Dias",
+                            help="Días totales asignados",
+                            min_value=0.0,
+                            max_value=31.0,
+                            step=0.5
+                        )
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                btn_guardar = st.form_submit_button("💾 Guardar y Sincronizar Cambios")
+                
+                if btn_guardar:
+                    with st.spinner("Sincronizando con la base central de Finanzas..."):
+                        # Identificamos qué filas cambiaron comparando el df original del gerente con el editado
+                        cambios = df_editado.compare(df_gerente)
+                        
+                        if cambios.empty:
+                            st.warning("No detectamos ningún cambio para guardar.")
+                        else:
+                            # Actualizar campos automáticos a las filas que el gerente acaba de ver/editar
+                            timestamp_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            
+                            # Actualizamos el dataframe editado con los datos de auditoría
+                            df_editado['Aprobado Por'] = st.session_state.usuario
+                            df_editado['Fecha de Acción'] = timestamp_actual
+                            
+                            # Combinar los cambios en el dataframe maestro (df_bd)
+                            # Actualizamos usando el índice para asegurar que modificamos las filas correctas
+                            df_bd.update(df_editado)
+                            
+                            # Enviar el dataframe actualizado a Google Sheets
+                            conn.update(worksheet="BD HH", data=df_bd)
+                            
+                            st.success(f"¡Cambios guardados con éxito! Finanzas ha recibido la actualización.")
+                            st.rerun()
 
-        with tab_proyectos:
-            st.write("**Desglose: ¿En qué proyectos está cada consultor?**")
-            # Este gráfico muestra las barras compuestas por colores de proyectos
-            fig_stack = px.bar(df_mes, x='Nombre consultor', y='Dias', color='Proyecto',
-                              color_discrete_sequence=px.colors.qualitative.Pastel,
-                              text_auto='.1f')
-            fig_stack.update_layout(barmode='stack', xaxis_title="")
-            st.plotly_chart(fig_stack, use_container_width=True)
-
-    with col_der:
-        st.write("**Análisis de Capacidad**")
-        fig_pie = go.Figure(data=[go.Pie(
-            labels=['Ocupado', 'Desocupado'],
-            values=[total_dias, desocupacion],
-            hole=.5, marker_colors=[COLOR_CYAN, "#F2F3F4"], textinfo='percent'
-        )])
-        fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), 
-                              legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"))
-        st.plotly_chart(fig_pie, use_container_width=True)
-
-    st.divider()
-
-    # --- NUEVO: TABLA DE DETALLE NOMINAL ---
-    st.subheader("📋 Detalle de Asignación por Proyecto")
-    st.write("Esta tabla muestra la 'sábana' filtrada para auditoría rápida.")
-    st.dataframe(
-        df_mes[['Nombre consultor', 'Proyecto', 'Cargo', 'Dias']].sort_values(by='Nombre consultor'),
-        use_container_width=True,
-        hide_index=True
-    )
-
-    st.divider()
-
-    # --- PROYECCIÓN Y MATRIZ (Igual que antes) ---
-    st.header(f"🚀 Proyección de Carga: {proy_sel}")
-    proyeccion = df_filtrado.groupby(['Mes', 'Proyecto'], observed=False)['Dias'].sum().reset_index()
-    fig_proy = px.bar(proyeccion.sort_values('Mes'), x='Mes', y='Dias', color='Proyecto',
-                      color_discrete_sequence=px.colors.qualitative.Prism, text_auto='.1f',
-                      category_orders={"Mes": orden_meses})
-    st.plotly_chart(fig_proy, use_container_width=True)
-
-    st.header("📈 Historial de Asignaciones")
-    matriz = df_filtrado.pivot_table(index='Nombre consultor', columns='Mes', values='Dias', aggfunc='sum', fill_value=0)
-    meses_col = [m for m in orden_meses if m in matriz.columns]
-    st.dataframe(matriz[meses_col].style.format("{:.1f}").map(
-        lambda v: f'color: {COLOR_RED}' if 0 < v < LIMITE_POLITICA else (f'color: {COLOR_PURPLE}' if v > LIMITE_POLITICA else f'color: {COLOR_CYAN}' if v == LIMITE_POLITICA else 'color: lightgray')
-    ), use_container_width=True)
-
-except Exception as e:
-    st.error(f"Error al procesar la información: {e}")
+    except Exception as e:
+        st.error(f"Error técnico durante la carga de datos: {e}")
