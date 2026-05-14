@@ -4,22 +4,16 @@ import pandas as pd
 from datetime import datetime
 
 # --- CONFIGURACIÓN CORPORATIVA ---
-# Cambiamos el nombre que aparece en la pestaña del navegador
 st.set_page_config(page_title="Módulo de Aprobaciones INNSPIRAL", page_icon="🔐", layout="wide")
 
-# --- LOGO DE LA EMPRESA ---
-# Intentará cargar el logo desde GitHub. El width controla el tamaño (250 píxeles es un buen estándar).
 try:
     st.image("logo.png", width=250)
 except Exception:
-    # Si aún no subes la imagen, esto evita que la pantalla muestre un error feo en rojo
     pass
 
-# Cambiamos el título principal
 st.title("🛡️ Portal de Aprobaciones - INNSPIRAL")
 
 # --- CONEXIÓN ---
-# Se utiliza ttl=0 para que no use memoria caché y siempre traiga los datos más frescos del Excel
 conn = st.connection("gsheets", type=GSheetsConnection)
 URL_HOJA = "https://docs.google.com/spreadsheets/d/1IQhd4LR8CjEd3PIYb7WUCW364vaKS4QVpCtLNQOpFB8/edit#gid=280416127"
 
@@ -28,14 +22,11 @@ def cargar_permisos():
 
 def cargar_bd():
     df = conn.read(spreadsheet=URL_HOJA, worksheet="BD HH", ttl=0)
-    
-    # Asegurar que existan las columnas nuevas (por si acaso aún no se han escrito en Excel)
     columnas_requeridas = ['Estado Aprobación', 'Aprobado Por', 'Comentarios Gerencia', 'Fecha de Acción']
     for col in columnas_requeridas:
         if col not in df.columns:
             df[col] = None
             
-    # Limpieza de días a formato numérico
     df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').str.strip()
     df['Dias'] = pd.to_numeric(df['Dias'], errors='coerce').fillna(0.0)
     return df
@@ -59,15 +50,25 @@ if st.session_state.usuario is None:
         if btn_login:
             try:
                 df_permisos = cargar_permisos()
-                # Filtrar la hoja de permisos buscando coincidencias exactas
+                
+                # --- SOLUCIÓN AL PROBLEMA DEL 12345.0 ---
+                # Convertimos todo a texto y si termina en '.0', se lo quitamos
+                def limpiar_clave(c):
+                    c_str = str(c).strip()
+                    if c_str.endswith('.0'):
+                        return c_str[:-2]
+                    return c_str
+                
+                df_permisos['Clave_Limpia'] = df_permisos['Clave'].apply(limpiar_clave)
+                # ----------------------------------------
+                
                 match = df_permisos[
                     (df_permisos['Email Gerente'].astype(str).str.strip().str.lower() == email_input.strip().lower()) & 
-                    (df_permisos['Clave'].astype(str).str.strip() == clave_input.strip())
+                    (df_permisos['Clave_Limpia'] == clave_input.strip())
                 ]
                 
                 if not match.empty:
                     st.session_state.usuario = email_input
-                    # Guardamos la lista de proyectos que le pertenecen a este gerente
                     st.session_state.proyectos_asignados = match['Proyecto Asignado'].tolist()
                     st.success("Acceso concedido. Cargando tus proyectos...")
                     st.rerun()
@@ -87,10 +88,7 @@ else:
     st.subheader("✅ Revisión y Aprobación de Carga (HH)")
     
     try:
-        # Cargar base de datos completa
         df_bd = cargar_bd()
-        
-        # Filtrar SOLO las filas de los proyectos que le pertenecen a este gerente
         df_gerente = df_bd[df_bd['Proyecto'].isin(st.session_state.proyectos_asignados)].copy()
         
         if df_gerente.empty:
@@ -98,11 +96,9 @@ else:
         else:
             st.write("Haz doble clic en las celdas de las columnas **Dias**, **Estado Aprobación** o **Comentarios Gerencia** para modificar.")
             
-            # Bloqueamos todas las columnas excepto las 3 que puede editar
             columnas_bloqueadas = [col for col in df_gerente.columns if col not in ['Dias', 'Estado Aprobación', 'Comentarios Gerencia']]
             
             with st.form("editor_form"):
-                # Mostrar el editor interactivo
                 df_editado = st.data_editor(
                     df_gerente,
                     disabled=columnas_bloqueadas,
@@ -133,24 +129,16 @@ else:
                 
                 if btn_guardar:
                     with st.spinner("Sincronizando con la base central de Finanzas..."):
-                        # Identificamos qué filas cambiaron comparando el df original del gerente con el editado
                         cambios = df_editado.compare(df_gerente)
                         
                         if cambios.empty:
                             st.warning("No detectamos ningún cambio para guardar.")
                         else:
-                            # Actualizar campos automáticos a las filas que el gerente acaba de ver/editar
                             timestamp_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            
-                            # Actualizamos el dataframe editado con los datos de auditoría
                             df_editado['Aprobado Por'] = st.session_state.usuario
                             df_editado['Fecha de Acción'] = timestamp_actual
                             
-                            # Combinar los cambios en el dataframe maestro (df_bd)
-                            # Actualizamos usando el índice para asegurar que modificamos las filas correctas
                             df_bd.update(df_editado)
-                            
-                            # Enviar el dataframe actualizado a Google Sheets
                             conn.update(worksheet="BD HH", data=df_bd)
                             
                             st.success(f"¡Cambios guardados con éxito! Finanzas ha recibido la actualización.")
