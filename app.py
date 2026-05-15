@@ -120,7 +120,7 @@ else:
         if df_gerente.empty:
             st.info(f"No hay registros para {mes_sel} en los proyectos seleccionados.")
         else:
-            # --- NUEVO: GRÁFICO DE APOYO VISUAL ---
+            # --- GRÁFICO DE APOYO VISUAL ---
             resumen_grafico = df_gerente.groupby('Nombre consultor')['Dias'].sum().reset_index()
             
             def get_color(d):
@@ -140,10 +140,9 @@ else:
             
             st.divider()
 
-            # --- TABLA DE EDICIÓN LIMPIA ---
+            # --- TABLA DE EDICIÓN ---
             st.write("📝 **Tabla de Aprobación** (Modifica los campos permitidos y guarda)")
             
-            # Quitamos 'Email', 'Estado Consultor' y 'Estado del Proyecto'
             cols_a_mostrar = [
                 'Nombre consultor', 'Proyecto', 'Mes', 'Dias', 
                 'Estado Aprobación', 'Comentarios Gerencia', 'Socio Responsable'
@@ -171,7 +170,10 @@ else:
                     df_editado['Fecha de Acción'] = datetime.now().strftime("%Y-%m-%d %H:%M")
                     
                     df_bd.update(df_editado)
-                    conn.update(worksheet="BD HH", data=df_bd)
+                    
+                    # ¡AQUÍ ESTÁ LA CORRECCIÓN! Agregamos spreadsheet=URL_HOJA
+                    conn.update(spreadsheet=URL_HOJA, worksheet="BD HH", data=df_bd)
+                    
                     st.success("Sincronización exitosa con la base central.")
                     st.rerun()
 
