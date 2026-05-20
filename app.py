@@ -29,11 +29,14 @@ def cargar_permisos():
 def cargar_bd():
     df = conn.read(spreadsheet=URL_HOJA, worksheet="BD HH", ttl=0)
     
-    # --- NUEVO: TRUCO PARA DETECTAR EL NOMBRE DEL SOCIO ---
-    # Si en tu Excel la columna se llama solo "Socio", la renombramos automáticamente
-    if 'Socio' in df.columns and 'Socio Responsable' not in df.columns:
-        df.rename(columns={'Socio': 'Socio Responsable'}, inplace=True)
-        
+    # --- SOLUCIÓN: BUSCADOR INTELIGENTE DE COLUMNAS (Ignora mayúsculas/minúsculas) ---
+    columnas_actuales = df.columns.tolist()
+    for col in columnas_actuales:
+        nombre_limpio = str(col).strip().lower()
+        # Si la columna dice "socio responsable" o "socio" de cualquier forma, la estandariza
+        if nombre_limpio == 'socio responsable' or nombre_limpio == 'socio':
+            df.rename(columns={col: 'Socio Responsable'}, inplace=True)
+            
     columnas_texto = [
         'Observaciones Admin', 'Estado GG', 'Comentarios GG', 
         'Estado Socio', 'Comentarios Socio', 'Aprobado Por', 'Fecha de Acción', 
@@ -45,7 +48,7 @@ def cargar_bd():
             df[col] = "" # Si no existe, la crea vacía
         else:
             # Nos aseguramos de que quite los "None" o "nan" visualmente feos
-            df[col] = df[col].astype(str).replace(['None', 'nan', '<NA>'], '').str.strip()
+            df[col] = df[col].astype(str).replace(['None', 'nan', '<NA>', 'nan'], '').str.strip()
             
     df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').str.strip()
     df['Dias'] = pd.to_numeric(df['Dias'], errors='coerce').fillna(0.0)
