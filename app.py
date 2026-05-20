@@ -29,17 +29,23 @@ def cargar_permisos():
 def cargar_bd():
     df = conn.read(spreadsheet=URL_HOJA, worksheet="BD HH", ttl=0)
     
-    # AQUÍ ESTÁ LA CORRECCIÓN: Agregamos 'Socio Responsable' a la lista segura
+    # --- NUEVO: TRUCO PARA DETECTAR EL NOMBRE DEL SOCIO ---
+    # Si en tu Excel la columna se llama solo "Socio", la renombramos automáticamente
+    if 'Socio' in df.columns and 'Socio Responsable' not in df.columns:
+        df.rename(columns={'Socio': 'Socio Responsable'}, inplace=True)
+        
     columnas_texto = [
         'Observaciones Admin', 'Estado GG', 'Comentarios GG', 
         'Estado Socio', 'Comentarios Socio', 'Aprobado Por', 'Fecha de Acción', 
         'Proyecto', 'Mes', 'Socio Responsable'
     ]
+    
     for col in columnas_texto:
         if col not in df.columns:
-            df[col] = "" # Si no existe, la crea vacía para que no se caiga
+            df[col] = "" # Si no existe, la crea vacía
         else:
-            df[col] = df[col].fillna("").astype(str).str.strip()
+            # Nos aseguramos de que quite los "None" o "nan" visualmente feos
+            df[col] = df[col].astype(str).replace(['None', 'nan', '<NA>'], '').str.strip()
             
     df['Dias'] = df['Dias'].astype(str).str.replace(',', '.').str.strip()
     df['Dias'] = pd.to_numeric(df['Dias'], errors='coerce').fillna(0.0)
@@ -173,7 +179,8 @@ else:
                         "Estado Socio": st.column_config.SelectboxColumn(options=["Pendiente", "Aprobado", "Con Sugerencias"]),
                         "Observaciones Admin": st.column_config.TextColumn(),
                         "Comentarios GG": st.column_config.TextColumn(),
-                        "Comentarios Socio": st.column_config.TextColumn()
+                        "Comentarios Socio": st.column_config.TextColumn(),
+                        "Socio Responsable": st.column_config.TextColumn()
                     },
                     use_container_width=True,
                     hide_index=True
