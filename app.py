@@ -29,13 +29,15 @@ def cargar_permisos():
 def cargar_bd():
     df = conn.read(spreadsheet=URL_HOJA, worksheet="BD HH", ttl=0)
     
+    # AQUÍ ESTÁ LA CORRECCIÓN: Agregamos 'Socio Responsable' a la lista segura
     columnas_texto = [
         'Observaciones Admin', 'Estado GG', 'Comentarios GG', 
-        'Estado Socio', 'Comentarios Socio', 'Aprobado Por', 'Fecha de Acción', 'Proyecto', 'Mes'
+        'Estado Socio', 'Comentarios Socio', 'Aprobado Por', 'Fecha de Acción', 
+        'Proyecto', 'Mes', 'Socio Responsable'
     ]
     for col in columnas_texto:
         if col not in df.columns:
-            df[col] = ""
+            df[col] = "" # Si no existe, la crea vacía para que no se caiga
         else:
             df[col] = df[col].fillna("").astype(str).str.strip()
             
@@ -99,7 +101,6 @@ else:
         meses_disp = sorted(df_bd['Mes'].unique())
         mes_sel = st.sidebar.selectbox("Mes", meses_disp)
         
-        # --- AQUÍ ESTÁ LA MAGIA PARA LA GERENTE ---
         if st.session_state.rol in ['Admin', 'GG']:
             proyectos_visibles = sorted(list(df_bd['Proyecto'].unique()))
         else:
